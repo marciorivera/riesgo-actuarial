@@ -26,7 +26,16 @@ def cargar_base():
 modelo, metadata = cargar_modelo()
 df = cargar_base()
 
-mapa = {int(k): v for k, v in metadata['mapa_riesgo'].items()}
+mapa_riesgo = metadata.get("mapa_riesgo")
+
+if not isinstance(mapa_riesgo, dict):
+    st.error(
+        "El archivo de metadatos no contiene un 'mapa_riesgo' válido."
+    )
+    st.write("Claves encontradas:", list(metadata.keys()))
+    st.stop()
+
+mapa = {int(k): v for k, v in mapa_riesgo.items()}
 
 st.caption(metadata['nombre_modelo'])
 
