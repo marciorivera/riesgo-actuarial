@@ -9,6 +9,7 @@ import streamlit as st
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
+
 st.set_page_config(
     page_title="Predicción de riesgo actuarial",
     page_icon="📊",
@@ -16,35 +17,47 @@ st.set_page_config(
 )
 
 st.title("Predicción de riesgo actuarial - Marcio Rivera PTI-0620")
+
 st.write(
     "Ingrese los datos solicitados para estimar el nivel de riesgo actuarial."
 )
 
 
 # ============================================================
-# RUTAS DE ARCHIVOS
-# Cambie estos nombres únicamente si sus archivos se llaman distinto.
+# RUTAS
 # ============================================================
+
 BASE_DIR = Path(__file__).resolve().parent
+
+# IMPORTANTE:
+# La aplicación utiliza el modelo SVM, NO el K-means.
 MODEL_PATH = BASE_DIR / "svm_riesgo_actuarial.pkl"
+
 METADATA_PATH = BASE_DIR / "model_metadata.json"
 
 
 # ============================================================
-# FUNCIONES DE CARGA
+# CARGAR MODELO
 # ============================================================
+
 @st.cache_resource
-def cargar_modelo(ruta: Path):
+def cargar_modelo(ruta):
     if not ruta.exists():
         raise FileNotFoundError(
             f"No se encontró el modelo: {ruta.name}. "
             "Verifique que esté en la misma carpeta que app.py."
         )
+
     return joblib.load(ruta)
 
 
+# ============================================================
+# CARGAR METADATA
+# ============================================================
+
 @st.cache_data
-def cargar_metadata(ruta: Path) -> dict:
+def cargar_metadata(ruta):
+
     if not ruta.exists():
         return {}
 
@@ -52,192 +65,346 @@ def cargar_metadata(ruta: Path) -> dict:
         datos = json.load(archivo)
 
     if not isinstance(datos, dict):
-        raise ValueError("metadata.json debe contener un objeto JSON.")
+        raise ValueError(
+            "model_metadata.json debe contener un objeto JSON."
+        )
 
     return datos
 
 
-def obtener_variables(modelo, metadata: dict) -> list[str]:
-    """
-    Busca los nombres de variables en metadata.json.
-    Si no aparecen, intenta obtenerlas del modelo de scikit-learn.
-    """
-    claves_posibles = [
-        "variables",
-        "features",
-        "feature_names",
-        "columnas",
-        "campos",
-    ]
+# ============================================================
+# CONFIGURACIÓN DE CAMPOS
+# ============================================================
 
-    for clave in claves_posibles:
-        valor = metadata.get(clave)
-        if isinstance(valor, list) and valor:
-            return [str(x) for x in valor]
+def crear_campo(variable):
 
-    if hasattr(modelo, "feature_names_in_"):
-        return [str(x) for x in modelo.feature_names_in_]
+    # --------------------------------------------------------
+    # EDAD
+    # --------------------------------------------------------
 
-    return []
-
-
-def obtener_mapa_riesgo(metadata: dict) -> dict:
-    """
-    Evita el KeyError cuando metadata.json no contiene 'mapa_riesgo'.
-    Acepta varios nombres habituales.
-    """
-    claves_posibles = [
-        "mapa_riesgo",
-        "clases",
-        "class_mapping",
-        "mapa_clases",
-        "etiquetas",
-        "labels",
-    ]
-
-    for clave in claves_posibles:
-        valor = metadata.get(clave)
-
-        if isinstance(valor, dict):
-            mapa = {}
-            for k, v in valor.items():
-                try:
-                    clave_convertida = int(k)
-                except (TypeError, ValueError):
-                    clave_convertida = str(k)
-
-                mapa[clave_convertida] = str(v)
-
-            return mapa
-
-        if isinstance(valor, list):
-            return {i: str(etiqueta) for i, etiqueta in enumerate(valor)}
-
-    # Valores predeterminados. Se usan solamente si metadata.json
-    # no incluye ningún mapa de clases.
-    return {
-        0: "Bajo",
-        1: "Medio",
-        2: "Alto",
-    }
-
-
-def obtener_configuracion_variable(metadata: dict, variable: str) -> dict:
-    """
-    Permite configurar cada campo desde metadata.json.
-    Ejemplo:
-    "configuracion_variables": {
-        "edad": {"tipo": "int", "min": 18, "max": 100, "default": 35}
-    }
-    """
-    configuraciones = metadata.get(
-        "configuracion_variables",
-        metadata.get("feature_config", {}),
-    )
-
-    if isinstance(configuraciones, dict):
-        config = configuraciones.get(variable, {})
-        if isinstance(config, dict):
-            return config
-
-    return {}
-
-
-def crear_campo(variable: str, metadata: dict):
-    config = obtener_configuracion_variable(metadata, variable)
-
-    etiqueta = str(config.get("etiqueta", variable.replace("_", " ").title()))
-    tipo = str(config.get("tipo", "float")).lower()
-    ayuda = config.get("ayuda")
-
-    opciones = config.get("opciones")
-    if isinstance(opciones, list) and opciones:
-        return st.selectbox(etiqueta, opciones=opciones, help=ayuda)
-
-    if tipo in {"int", "integer", "entero"}:
-        minimo = int(config.get("min", 0))
-        maximo = int(config.get("max", 100))
-        valor = int(config.get("default", minimo))
-        paso = int(config.get("step", 1))
+    if variable == "age":
 
         return st.number_input(
-            etiqueta,
-            min_value=minimo,
-            max_value=maximo,
-            value=valor,
-            step=paso,
-            help=ayuda,
+            "Edad",
+            min_value=18,
+            max_value=100,
+            value=35,
+            step=1,
+            help="Edad del cliente.",
         )
 
-    if tipo in {"bool", "boolean", "booleano"}:
-        return int(st.checkbox(etiqueta, help=ayuda))
+    # --------------------------------------------------------
+    # IMC
+    # --------------------------------------------------------
 
-    minimo = float(config.get("min", 0.0))
-    maximo = float(config.get("max", 1_000_000.0))
-    valor = float(config.get("default", minimo))
-    paso = float(config.get("step", 1.0))
+    if variable == "bmi":
 
-    return st.number_input(
-        etiqueta,
-        min_value=minimo,
-        max_value=maximo,
-        value=valor,
-        step=paso,
-        help=ayuda,
+        return st.number_input(
+            "IMC",
+            min_value=10.0,
+            max_value=80.0,
+            value=25.0,
+            step=0.1,
+            format="%.1f",
+            help="Índice de masa corporal.",
+        )
+
+    # --------------------------------------------------------
+    # HIJOS
+    # --------------------------------------------------------
+
+    if variable == "children":
+
+        return st.number_input(
+            "Número de hijos",
+            min_value=0,
+            max_value=10,
+            value=0,
+            step=1,
+            help="Número de hijos o dependientes.",
+        )
+
+    # --------------------------------------------------------
+    # SEXO
+    # --------------------------------------------------------
+
+    if variable == "sex":
+
+        return st.selectbox(
+            "Sexo",
+            options=[
+                "male",
+                "female",
+            ],
+        )
+
+    # --------------------------------------------------------
+    # FUMADOR
+    # --------------------------------------------------------
+
+    if variable == "smoker":
+
+        return st.selectbox(
+            "¿Es fumador?",
+            options=[
+                "no",
+                "yes",
+            ],
+        )
+
+    # --------------------------------------------------------
+    # REGIÓN
+    # --------------------------------------------------------
+
+    if variable == "region":
+
+        return st.selectbox(
+            "Región",
+            options=[
+                "southwest",
+                "southeast",
+                "northwest",
+                "northeast",
+            ],
+        )
+
+    # --------------------------------------------------------
+    # VARIABLE DESCONOCIDA
+    # --------------------------------------------------------
+
+    raise ValueError(
+        f"La variable '{variable}' no está configurada "
+        "para el formulario."
     )
 
 
-def traducir_prediccion(prediccion, mapa: dict) -> str:
-    if prediccion in mapa:
-        return mapa[prediccion]
+# ============================================================
+# OBTENER VARIABLES DEL SVM
+# ============================================================
 
-    texto = str(prediccion)
+def obtener_variables_svm(modelo, metadata):
 
-    if texto in mapa:
-        return mapa[texto]
+    # Primero intentamos usar exactamente las variables
+    # guardadas por el notebook.
+    variables = metadata.get("features_svm")
 
-    try:
-        entero = int(prediccion)
-        if entero in mapa:
-            return mapa[entero]
-    except (TypeError, ValueError):
-        pass
+    if isinstance(variables, list) and variables:
 
-    return texto
+        return [str(x) for x in variables]
+
+    # Si metadata no las contiene, utilizamos las variables
+    # que sabemos que fueron utilizadas para entrenar el SVM.
+    variables = [
+        "age",
+        "bmi",
+        "children",
+        "sex",
+        "smoker",
+        "region",
+    ]
+
+    # Si el modelo tiene feature_names_in_, comprobamos que
+    # corresponda al conjunto esperado.
+    if hasattr(modelo, "feature_names_in_"):
+
+        nombres_modelo = [
+            str(x)
+            for x in modelo.feature_names_in_
+        ]
+
+        # Si el modelo conserva nombres de columnas originales,
+        # utilizamos esos nombres.
+        if all(
+            variable in nombres_modelo
+            for variable in variables
+        ):
+            return variables
+
+    return variables
 
 
 # ============================================================
-# CARGA DEL MODELO Y LOS METADATOS
+# NORMALIZAR DATOS
 # ============================================================
+
+def preparar_entrada(valores):
+
+    entrada = pd.DataFrame(
+        [valores]
+    )
+
+    # --------------------------------------------------------
+    # NUMÉRICAS
+    # --------------------------------------------------------
+
+    entrada["age"] = pd.to_numeric(
+        entrada["age"],
+        errors="raise"
+    )
+
+    entrada["bmi"] = pd.to_numeric(
+        entrada["bmi"],
+        errors="raise"
+    )
+
+    entrada["children"] = pd.to_numeric(
+        entrada["children"],
+        errors="raise"
+    )
+
+    # --------------------------------------------------------
+    # CATEGÓRICAS
+    #
+    # El notebook utiliza .lower() para estas variables.
+    # Las dejamos explícitamente como texto.
+    # --------------------------------------------------------
+
+    entrada["sex"] = (
+        entrada["sex"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    entrada["smoker"] = (
+        entrada["smoker"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    entrada["region"] = (
+        entrada["region"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    # Orden EXACTO utilizado por el SVM
+    columnas = [
+        "age",
+        "bmi",
+        "children",
+        "sex",
+        "smoker",
+        "region",
+    ]
+
+    return entrada[columnas]
+
+
+# ============================================================
+# CARGAR MODELO Y METADATA
+# ============================================================
+
 try:
-    modelo = cargar_modelo(MODEL_PATH)
-    metadata = cargar_metadata(METADATA_PATH)
-except Exception as error:
-    st.error(f"No fue posible iniciar la aplicación: {error}")
-    st.stop()
 
-
-variables = obtener_variables(modelo, metadata)
-mapa_riesgo = obtener_mapa_riesgo(metadata)
-
-if not variables:
-    st.error(
-        "No fue posible determinar las variables requeridas por el modelo. "
-        "Agregue una lista llamada 'variables' en metadata.json o entrene el "
-        "modelo con nombres de columnas."
+    modelo = cargar_modelo(
+        MODEL_PATH
     )
+
+    metadata = cargar_metadata(
+        METADATA_PATH
+    )
+
+except Exception as error:
+
+    st.error(
+        f"No fue posible iniciar la aplicación: {error}"
+    )
+
     st.stop()
+
+
+# ============================================================
+# VARIABLES DEL MODELO
+# ============================================================
+
+try:
+
+    variables = obtener_variables_svm(
+        modelo,
+        metadata
+    )
+
+except Exception as error:
+
+    st.error(
+        f"No fue posible determinar las variables del modelo: {error}"
+    )
+
+    st.stop()
+
+
+# ============================================================
+# INFORMACIÓN DEL MODELO
+# ============================================================
+
+with st.sidebar:
+
+    st.header("Información técnica")
+
+    st.write(
+        f"**Modelo:** `{MODEL_PATH.name}`"
+    )
+
+    st.write(
+        f"**Metadatos:** `{METADATA_PATH.name}`"
+    )
+
+    st.write(
+        "**Algoritmo:** SVM"
+    )
+
+    if "svm" in metadata:
+
+        datos_svm = metadata["svm"]
+
+        if isinstance(datos_svm, dict):
+
+            if "accuracy_test" in datos_svm:
+
+                accuracy = datos_svm["accuracy_test"]
+
+                st.write(
+                    f"**Accuracy:** {float(accuracy):.2%}"
+                )
+
+            if "mejores_parametros" in datos_svm:
+
+                with st.expander(
+                    "Parámetros del SVM"
+                ):
+
+                    st.json(
+                        datos_svm["mejores_parametros"]
+                    )
+
+    st.caption(
+        "El resultado es una estimación del modelo y debe "
+        "interpretarse junto con criterios técnicos y actuariales."
+    )
 
 
 # ============================================================
 # FORMULARIO
 # ============================================================
-with st.form("formulario_prediccion"):
-    st.subheader("Datos para la predicción")
+
+with st.form(
+    "formulario_prediccion"
+):
+
+    st.subheader(
+        "Datos para la predicción"
+    )
 
     valores = {}
+
     for variable in variables:
-        valores[variable] = crear_campo(variable, metadata)
+
+        valores[variable] = crear_campo(
+            variable
+        )
 
     enviar = st.form_submit_button(
         "Calcular riesgo",
@@ -249,44 +416,106 @@ with st.form("formulario_prediccion"):
 # ============================================================
 # PREDICCIÓN
 # ============================================================
+
 if enviar:
+
     try:
-        entrada = pd.DataFrame([valores], columns=variables)
-        prediccion = modelo.predict(entrada)[0]
-        nivel = traducir_prediccion(prediccion, mapa_riesgo)
 
-        st.success(f"Nivel de riesgo estimado: {nivel}")
+        # ----------------------------------------------------
+        # PREPARAR DATAFRAME
+        # ----------------------------------------------------
 
-        if hasattr(modelo, "predict_proba"):
-            probabilidades = modelo.predict_proba(entrada)[0]
-            clases = getattr(
-                modelo,
-                "classes_",
-                list(range(len(probabilidades))),
-            )
+        entrada = preparar_entrada(
+            valores
+        )
 
-            tabla = pd.DataFrame(
-                {
-                    "Nivel": [
-                        traducir_prediccion(clase, mapa_riesgo)
-                        for clase in clases
-                    ],
-                    "Probabilidad": probabilidades,
-                }
-            )
+        # ----------------------------------------------------
+        # PREDICCIÓN
+        # ----------------------------------------------------
 
-            tabla["Probabilidad"] = tabla["Probabilidad"].map(
-                lambda x: f"{x:.2%}"
-            )
+        prediccion = modelo.predict(
+            entrada
+        )[0]
 
-            st.subheader("Probabilidades")
-            st.dataframe(
-                tabla,
-                hide_index=True,
-                use_container_width=True,
-            )
+        # ----------------------------------------------------
+        # CONVERTIR RESULTADO A TEXTO
+        # ----------------------------------------------------
 
-        with st.expander("Datos enviados al modelo"):
+        nivel = str(
+            prediccion
+        )
+
+        # ----------------------------------------------------
+        # MOSTRAR RESULTADO
+        # ----------------------------------------------------
+
+        st.success(
+            f"Nivel de riesgo estimado: {nivel}"
+        )
+
+        # ----------------------------------------------------
+        # INFORMACIÓN ADICIONAL
+        # ----------------------------------------------------
+
+        if hasattr(
+            modelo,
+            "predict_proba"
+        ):
+
+            try:
+
+                probabilidades = modelo.predict_proba(
+                    entrada
+                )[0]
+
+                clases = getattr(
+                    modelo,
+                    "classes_",
+                    range(
+                        len(probabilidades)
+                    ),
+                )
+
+                tabla = pd.DataFrame(
+                    {
+                        "Nivel": [
+                            str(clase)
+                            for clase in clases
+                        ],
+                        "Probabilidad": probabilidades,
+                    }
+                )
+
+                tabla["Probabilidad"] = (
+                    tabla["Probabilidad"]
+                    .map(
+                        lambda x: f"{x:.2%}"
+                    )
+                )
+
+                st.subheader(
+                    "Probabilidades"
+                )
+
+                st.dataframe(
+                    tabla,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+            except Exception:
+                # Algunos modelos SVM no tienen probabilidades
+                # habilitadas. En ese caso no mostramos la tabla.
+                pass
+
+        # ----------------------------------------------------
+        # DATOS ENVIADOS AL MODELO
+        # ----------------------------------------------------
+
+        with st.expander(
+            "Datos enviados al modelo"
+        ):
+
             st.dataframe(
                 entrada,
                 hide_index=True,
@@ -294,30 +523,12 @@ if enviar:
             )
 
     except Exception as error:
-        st.error(f"No fue posible realizar la predicción: {error}")
+
+        st.error(
+            f"No fue posible realizar la predicción: {error}"
+        )
+
         st.info(
-            "Revise que las variables, el orden de las columnas y los tipos "
-            "de datos coincidan con los utilizados durante el entrenamiento."
+            "Los datos enviados deben coincidir con las variables "
+            "utilizadas durante el entrenamiento del modelo SVM."
         )
-
-
-# ============================================================
-# INFORMACIÓN TÉCNICA
-# ============================================================
-with st.sidebar:
-    st.header("Información")
-
-    st.write(f"Modelo: `{MODEL_PATH.name}`")
-
-    if METADATA_PATH.exists():
-        st.write(f"Metadatos: `{METADATA_PATH.name}`")
-    else:
-        st.warning(
-            "No se encontró metadata.json. La aplicación está usando "
-            "configuraciones predeterminadas."
-        )
-
-    st.caption(
-        "El resultado es una estimación del modelo y debe interpretarse "
-        "junto con criterios técnicos y actuariales."
-    )
