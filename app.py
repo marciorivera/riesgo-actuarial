@@ -26,7 +26,7 @@ st.write(
 # Cambie estos nombres únicamente si sus archivos se llaman distinto.
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "kmeans_riesgo_actuarial.pkl"
+MODEL_PATH = BASE_DIR / "svm_riesgo_actuarial.pkl"
 METADATA_PATH = BASE_DIR / "model_metadata.json"
 
 
